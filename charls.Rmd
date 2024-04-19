@@ -1,0 +1,690 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(lubridate)
+library(ggplot2)
+library(haven)
+library(tidyverse)
+library("ggsci")
+library("scales")
+library("foreign")
+
+
+```
+```{r}
+dta <- read_dta("/Users/zhangxiangyu/Desktop/Capstone/DATA/Harmonized /H_CHARLS_D_Data_副本.dta")
+```
+
+
+```{r}
+dta_long1 <- dta %>%  select(ID,householdID,communityID,inw1,inw2,inw3,inw4, ragender ,raeduc_c,rhousehold_count,rwave_count, everything()) 
+dta_long1 <- pivot_longer(
+  data=dta_long1,
+  cols=r1wthh:r4pension_status,
+  names_to = "variables",
+)
+
+
+
+dta_long2 <- dta_long1 %>%
+  mutate(first_two_chars = substr(variables, 1, 2), # Extracts the first two characters
+         chars_from_third = substr(variables, 3, nchar(variables)), # Extracts from the third character to the end
+         combined_variable = case_when(
+           str_detect(variables, "\\d") & substr(first_two_chars, 1, 1) == 'r' ~ paste0('r_', chars_from_third),
+           str_detect(variables, "\\d") & substr(first_two_chars, 1, 1) == 's' ~ paste0('s_', chars_from_third),
+           str_detect(variables, "\\d") ~ paste0(first_two_chars, '_', chars_from_third), # When there are numbers
+           TRUE ~ variables  # No numbers, return original
+         ),
+         wave_num_from_variables = str_extract(variables, "\\d+"))
+
+dta_long3 <- dta_long2 %>% 
+  select(-c(first_two_chars,chars_from_third,variables))
+
+
+dta_long4 <- pivot_wider(
+  data=dta_long3,
+  id_cols=c("ID", "householdID", "communityID", "wave_num_from_variables", "inw1","inw2","inw3","inw4","ragender", "raeduc_c", "rhousehold_count", "rwave_count"),
+  names_from="combined_variable",
+  values_from = "value"
+)
+
+write.dta(dta_long4, "/Users/zhangxiangyu/Desktop/Capstone/DATA/mydata2.dta")
+```
+
+
+
+Figures data
+```{r}
+dta_full <- read_dta("/Users/zhangxiangyu/Desktop/Capstone/DATA/CHARLS after clean2.dta")
+dta_full <- dta_full %>%
+  mutate(gender_hukou = recode(gender_hukou,
+                              ' 1' = 'Rural Male',
+                              '2' = 'Rural Female',
+                              '3' = 'Urban Male',
+                              '4' = 'Urban Female'
+                        ))
+dta_full <- dta_full %>%
+  mutate(age_c = recode(age_c,
+                              '1' = '45-49',
+                              '2' = '50-54',
+                              '3' = '55-59',
+                              '4' = '60-64',
+                              '5' = '65-69',
+                              '6' = '70+'
+                        ))
+
+dta_figure <- dta_full %>%
+  select(r_cesd10,s_cesd_score, wave_num,gender_hukou,r_annual_wrkhrs,r_DPdummy,s_DPdummy, age_c,r_work, z_r_cesd10,z_s_cesd10,outlier, ihs_wrkhrs, hukou_adj, ragender )
+```
+
+
+Figure 1
+```{r}
+
+
+percentage_data_r <- dta_figure %>%
+  group_by(age_c, wave_num, gender_hukou) %>%
+  summarise(percentage = mean(r_DPdummy == 1, na.rm = TRUE) * 100) %>%
+  ungroup() %>% 
+  filter(!is.na(gender_hukou))
+
+ggplot(percentage_data_r, aes(x = age_c, y = percentage, color = gender_hukou, group = interaction(gender_hukou, wave_num))) +
+  geom_line(linewidth = 1) +  
+facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Age Group",
+    y = "Percentage(%)",
+    title = "Prevalence of Elevated Depression Risk Across Survey Waves in Age Groups"
+  ) +
+  scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+```
+
+Figure 2A: Annual Work Hours of Respondents by the Depression Dummy and Wave
+```{r}
+wrkhrs_data_r <- dta_figure %>%
+  select(wave_num, age_c, gender_hukou, r_annual_wrkhrs,r_DPdummy) %>%
+  filter(!is.na(gender_hukou), !is.na(r_annual_wrkhrs), !is.na(r_DPdummy)) %>%
+  group_by(wave_num, age_c, gender_hukou,r_DPdummy) %>%
+  summarise(meanwrkhrs = mean(r_annual_wrkhrs, na.rm = TRUE), .groups = 'drop') 
+
+ggplot(wrkhrs_data_r, aes(as.factor(x = r_DPdummy), y = meanwrkhrs, fill = gender_hukou)) +
+  geom_line(data = wrkhrs_data_r, aes(group = interaction(wave_num, gender_hukou), color = gender_hukou, color = wave_num), stat = "summary", fun = "mean",linewidth = 0.7)+
+  labs(
+    x = "Respondent's Depression Status",
+    y = "Annual Work Hours",
+    title = "Annual Work Hours Relative to Depression Status Across Wave"
+  ) +
+  facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+
+## no facet
+ggplot(wrkhrs_data_r, aes(x = as.factor(r_DPdummy), y = meanwrkhrs, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) +
+  labs(
+    x = "Respondent's Depression Status",
+    y = "Annual Work Hours",
+    title = "Annual Work Hours Relative to Depression Status Across Wave"
+  ) +
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+## Facet
+ggplot(wrkhrs_data_r, aes(x = as.factor(r_DPdummy), y = meanwrkhrs, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) +
+facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Respondent's Depression Status",
+    y = "Annual Work Hours",
+    title = "Annual Work Hours Relative to Depression Status Across Waves"
+  ) +
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+```
+Figure 2B: Annual Work Hours of Spouse by the Depression Dummy and Wave
+```{r}
+wrkhrs_data_r <- dta_figure %>%
+  select(wave_num, age_c, gender_hukou, r_annual_wrkhrs,s_DPdummy) %>%
+  filter(!is.na(gender_hukou), !is.na(r_annual_wrkhrs), !is.na(s_DPdummy)) %>%
+  group_by(wave_num, age_c, gender_hukou,s_DPdummy) %>%
+  summarise(meanwrkhrs = mean(r_annual_wrkhrs, na.rm = TRUE), .groups = 'drop') 
+
+ggplot(wrkhrs_data_r, aes(as.factor(x = s_DPdummy), y = meanwrkhrs, fill = gender_hukou)) +
+  geom_line(data = wrkhrs_data_r, aes(group = interaction(wave_num, gender_hukou), color = gender_hukou), stat = "summary", fun = "mean",linewidth = 0.7)+
+  labs(
+    x = "Spousal Depression Status",
+    y = "Annual Work Hours",
+    title = "Annual Work Hours Relative to Spouse's Depression Status Across Waves"
+  ) +
+  facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+## no facet
+ggplot(wrkhrs_data_r, aes(x = as.factor(s_DPdummy), y = meanwrkhrs, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) +
+  labs(
+    x = "Spousal Depression Status",
+    y = "Annual Work Hours",
+    title = "Annual Work Hours Relative to Spouse's Depression Status Across Waves"
+  ) +
+scale_y_continuous(labels = label_number(),breaks = scales::pretty_breaks(n = 10))+
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+## Facet
+ggplot(wrkhrs_data_r, aes(x = as.factor(s_DPdummy), y = meanwrkhrs, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) +
+facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Spousal Depression Status",
+    y = "Annual Work Hours",
+    title = "Annual Work Hours Relative to Spouse's Depression Status Across Waves"
+  ) +
+scale_fill_locuszoom()+
+  scale_y_continuous(labels = label_number(),breaks = scales::pretty_breaks(n = 10)) +
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+```
+
+Figrue 3A : Percentage of work status in DP dummy.
+```{r}
+wrkstatus_data_r <- dta_figure %>%
+  group_by(age_c, wave_num, gender_hukou,r_DPdummy) %>%
+  summarise(percentage_work = mean((r_work== 1), na.rm = TRUE) * 100) %>%
+  ungroup() %>% 
+  filter(!is.na(gender_hukou)& !is.na(r_DPdummy))
+
+ggplot(wrkstatus_data_r, aes(as.factor(x = r_DPdummy), y = percentage_work, fill = gender_hukou)) +
+  geom_line(data = wrkstatus_data_r, aes(group = interaction(wave_num, gender_hukou), color = gender_hukou), stat = "summary", fun = "mean",linewidth = 0.7)+
+  facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Respondent's Depression Status",
+    y = "Percentage(%)",
+    title = "Workforce Participation Rate by Depression Status Across Survey Waves"
+  ) +
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+ggplot(wrkstatus_data_r, aes(as.factor(x = r_DPdummy), y = percentage_work, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) + 
+scale_fill_locuszoom()+
+  labs(
+    x = "Respondent's Depression Status",
+    y = "Work Status",
+    title = "Workforce Participation Rate by Depression Status Across Survey Waves"
+  ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+ggplot(wrkstatus_data_r, aes(as.factor(x = r_DPdummy), y = percentage_work, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) + 
+  facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Respondent's Depression Status",
+    y = "Work Status",
+    title = "Workforce Participation Rate by Depression Status Across Survey Waves"
+  ) +
+  theme_minimal()+
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+```
+
+Figrue 3B : Percentage of work status in Spouse DP dummy.
+```{r}
+wrkstatus_data_r <- dta_figure %>%
+  group_by(age_c, wave_num, gender_hukou,s_DPdummy) %>%
+  summarise(percentage_work = mean((r_work== 1), na.rm = TRUE) * 100) %>%
+  ungroup() %>% 
+  filter(!is.na(gender_hukou)& !is.na(s_DPdummy))
+
+ggplot(wrkstatus_data_r, aes(as.factor(x = s_DPdummy), y = percentage_work, fill = gender_hukou)) +
+  geom_line(data = wrkstatus_data_r, aes(group = interaction(wave_num, gender_hukou), color = gender_hukou), stat = "summary", fun = "mean",linewidth = 0.7)+
+  facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Spousal Depression Status",
+    y = "Percentage(%)",
+    title = "Workforce Participation Rate by Spouse's Depression Status Across Survey Waves"
+  ) +
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+ggplot(wrkstatus_data_r, aes(as.factor(x = s_DPdummy), y = percentage_work, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) + 
+scale_fill_locuszoom()+
+  labs(
+    x = "Spousal Depression Status",
+    y = "Work Status",
+    title = "Workforce Participation Rate by Spouse's Depression Status Across Survey Waves"
+  ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+ggplot(wrkstatus_data_r, aes(as.factor(x = s_DPdummy), y = percentage_work, fill = gender_hukou)) +
+  geom_boxplot(linewidth = 0.7) + 
+facet_wrap(~ wave_num, labeller = labeller(wave_num = function(x) paste("Wave", x))) +
+  labs(
+    x = "Spousal Depression Status",
+    y = "Work Status",
+    title = "Workforce Participation Rate by Spouse's Depression Status Across Survey Waves"
+  ) +
+  theme_minimal()+
+scale_fill_locuszoom()+
+    theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+```
+
+
+
+Figure1: LOWESS respondents wrkhrs vs stnd cesd score  & LOWESS spouse wrkhrs vs stnd cesd score 
+```{r}
+# Plotting with lowess
+dta_figure_filtered <- dta_figure %>% filter(!is.na(gender_hukou)) 
+dta_figure_filtered2 <- dta_figure_filtered %>% filter(outlier == 0) 
+
+# respondents 
+ggplot(dta_figure_filtered2, aes(x = z_r_cesd10, y = r_annual_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Annual Work Hours\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered2, aes(x = z_r_cesd10, y = r_annual_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+  facet_wrap(~wave_num)+
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Annual Work Hours\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+# spouse
+ggplot(dta_figure_filtered2, aes(x = z_s_cesd10, y = r_annual_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Annual Work Hours\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered2, aes(x = z_s_cesd10, y = r_annual_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title =  "Respondent's Annual Work Hours\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+
+```
+
+Figure2: LOWESS respondents wrk status  vs stnd cesd score  & LOWESS spouse wrk status  vs stnd cesd score 
+```{r}
+ggplot(dta_figure_filtered2, aes(x = z_r_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered2, aes(x = z_r_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+  facet_wrap(~wave_num)+
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+
+# spouse
+ggplot(dta_figure_filtered2, aes(x = z_s_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered2, aes(x = z_s_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+```
+
+Figure1: LOWESS respondents wrkhrs vs stnd cesd score  & LOWESS spouse wrkhrs vs stnd cesd score 
+```{r}
+# Plotting with lowess
+dta_figure_filtered <- dta_figure %>% filter(!is.na(gender_hukou)) 
+dta_figure_filtered2 <- dta_figure_filtered %>% filter(outlier == 0) 
+
+# respondents 
+ggplot(dta_figure_filtered, aes(x = z_r_cesd10, y = ihs_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours(IHS)", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Annual Work Hours (IHS)\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered, aes(x = z_r_cesd10, y = ihs_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+  facet_wrap(~wave_num)+
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours(IHS)", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Annual Work Hours (IHS)\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+# spouse
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = ihs_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours (IHS)", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Annual Work Hours (IHS)\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = ihs_wrkhrs, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Annual Work Hours (IHS)", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title =  "Respondent's Annual Work Hours (IHS)\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+
+```
+
+Figure2: LOWESS respondents wrk status  vs stnd cesd score  & LOWESS spouse wrk status  vs stnd cesd score 
+```{r}
+ggplot(dta_figure_filtered, aes(x = z_r_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered, aes(x = z_r_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+  facet_wrap(~wave_num)+
+geom_vline(xintercept=0.34867501, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+
+# spouse
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = r_work, color = factor(gender_hukou))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+```
+
+```{r}
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = ihs_wrkhrs, color = factor(ragender))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "ihs", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = r_work, color = factor(ragender))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = ihs_wrkhrs, color = factor(hukou_adj))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "ihs", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = r_work, color = factor(hukou_adj))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_locuszoom() +
+    facet_wrap(~wave_num)+
+geom_vline(xintercept=0.3447715, linetype="dashed", color="black") + 
+  labs(y = "Respondent's Labor Participation", 
+       x = "Spouse's Standardized CESD Score", 
+       color = "Gender and Hukou Status",
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender and Hukou Status") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())
+```
+
+```{r}
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = ihs_wrkhrs, color = factor(ragender), linetype = factor(ragender))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_manual(values = c("blue", "red"), labels = c("Male", "Female")) +
+  scale_linetype_manual(values = c("solid", "dashed"), labels = c("Male", "Female")) +
+  geom_vline(xintercept = 0.3447715, linetype = "dashed", color = "black") + 
+  labs(y = "Respondent's Annual Work Hours (IHS)", 
+       x = "Spouse's Standardized CESD Score", 
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())+
+    guides(
+    color = guide_legend(),
+    linetype = guide_legend(override.aes = list(color = c("blue", "red")))
+  )
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = r_work, color = factor(ragender), linetype = factor(ragender))) + 
+  stat_smooth(method = "loess", se = FALSE) +
+  geom_vline(xintercept = 0.3447715, linetype = "dashed", color = "black") +
+  scale_color_manual(values = c("blue", "red"), labels = c("Male", "Female"), name = "Gender") +
+  scale_linetype_manual(values = c("solid", "dashed"), labels = c("Male", "Female"), name = "Gender") +
+  labs(
+    y = "Respondent's Labor Participation", 
+    x = "Spouse's Standardized CESD Score", 
+    title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender"
+  ) +
+  theme_classic() +
+  theme(
+    panel.grid.major.y = element_line(), 
+    legend.title = element_blank()
+  ) +
+  guides(
+    color = guide_legend(),
+    linetype = guide_legend(override.aes = list(color = c("blue", "red")))
+  )
+
+```
+
+```{r}
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = ihs_wrkhrs, color = factor(hukou_adj), linetype = factor(hukou_adj))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_manual(values = c("blue", "red"), labels = c("Urban", "Rural")) +
+  scale_linetype_manual(values = c("solid", "dashed"), labels = c("Urban", "Rural")) +
+  geom_vline(xintercept = 0.3447715, linetype = "dashed", color = "black") + 
+  labs(y = "Respondent's Annual Work Hours (IHS)", 
+       x = "Spouse's Standardized CESD Score", 
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())+
+    guides(
+    color = guide_legend(),
+    linetype = guide_legend(override.aes = list(color = c("blue", "red")))
+  )
+
+ggplot(dta_figure_filtered, aes(x = z_s_cesd10, y = r_work, color = factor(hukou_adj), linetype = factor(hukou_adj))) + 
+  stat_smooth(method = "loess", se = FALSE) + 
+  scale_color_manual(values = c("blue", "red"), labels = c("Urban", "Rural")) +
+  scale_linetype_manual(values = c("solid", "dashed"), labels = c("Urban", "Rural")) +
+  geom_vline(xintercept = 0.3447715, linetype = "dashed", color = "black") + 
+  labs(y = "Respondent's Annual Work Hours (IHS)", 
+       x = "Spouse's Standardized CESD Score", 
+       title = "Respondent's Labor Participation\nand Spouse's Standardized CESD Score Across Gender") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(), legend.title = element_blank())+
+    guides(
+    color = guide_legend(),
+    linetype = guide_legend(override.aes = list(color = c("blue", "red")))
+  )
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
