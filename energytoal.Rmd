@@ -1,0 +1,301 @@
+---
+title: "Total Energy"
+author: "xyz"
+date: "2024-01-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library("dplyr")
+library("tidyr")
+library("stringr")
+library("ggplot2")
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+setwd("~/Desktop/RA/EU Energy")
+EnergyData <- read.csv("/Users/zhangxiangyu/Desktop/RA/EU Energy/nrg_bal_c__custom_9437690_linear.csv", stringsAsFactors = FALSE)
+EnergyData_fuel <- read.csv("/Users/zhangxiangyu/Desktop/RA/EU Energy/Eurostat with fuel type.csv", stringsAsFactors = FALSE)
+gdp_EU <- read.csv("/Users/zhangxiangyu/Desktop/RA/EU Energy/GDP_eurostat.csv", stringsAsFactors = FALSE)
+
+EnergyData2 <- read.csv("/Users/zhangxiangyu/Downloads/nrg_bal_s_linear.csv", stringsAsFactors = FALSE)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+
+Get data only from Total 
+```{r pressure, echo=FALSE}
+head(EnergyData)
+```
+
+##Get and organize Euro data from Total
+```{r}
+## Total
+enr_full <- select(EnergyData, -c(DATAFLOW, LAST.UPDATE, freq, OBS_FLAG))
+names(enr_full)[names(enr_full) %in% c("nrg_bal","geo","TIME_PERIOD","OBS_VALUE")]  <- c("energy_balance","Country_Code", "Year","value" )
+
+enr_full_wide <- pivot_wider(enr_full, id_cols=c('Country_Code','Year'), names_from="energy_balance", values_from="value")
+names(enr_full_wide)[names(enr_full_wide) %in% c( "AFC", "EXP", "FC_E", "FC_NE", "FEC2020-2030",  "GAE", "IMP", "NRGSUP", "PEC2020-2030", "PPRD", "RCV_RCY", "STATDIFF", "STK_CHG")]  <- c("avail_fin_cons", "exports", "fin_cons_enr","fin_cons_noeenr", "fin_enr_cons", "Gross_available_energy", "imports", "tot_enr_supply", "primary_enr_cons", "primary_prod", "recovered_recycled_prod", "
+stat_diff", "stk_change" )
+
+country_names <- c(AT = "Austria", BE = "Belgium", BG = "Bulgaria", CY = "Cyprus",
+                   CZ = "Czech Republic", DE = "Germany", DK = "Denmark", EE = "Estonia",
+                   EL = "Greece", ES = "Spain", EU27_2020 = "European Union (27 countries, 2020)",
+                   FI = "Finland", FR = "France", HR = "Croatia", HU = "Hungary", 
+                   IE = "Ireland", IT = "Italy", LT = "Lithuania", LU = "Luxembourg",
+                   LV = "Latvia", MT = "Malta", NL = "Netherlands", PL = "Poland", 
+                   PT = "Portugal", RO = "Romania", SE = "Sweden", SI = "Slovenia", SK = "Slovakia")
+
+## "Mmutate": "enr_full_wide", it finds the corresponding country name from the country_names vector and creates the Country_Name column with these names.
+enr_tot <- enr_full_wide %>%
+  mutate(Country_Name = country_names[Country_Code]) %>% 
+  select(1, Country_Name, everything()) %>%
+  mutate(netIM = imports - exports) %>% 
+  mutate(enr_indepen_gross = netIM/Gross_available_energy *100) %>% 
+  mutate(prod_gae = primary_prod/Gross_available_energy *100)
+
+```
+
+
+##Get and organize data from different fule types
+```{r}
+##with fuel type
+enr_full_fuel <- select(EnergyData_fuel, -c(DATAFLOW, LAST.UPDATE, freq,OBS_FLAG))
+names(enr_full_fuel)[names(enr_full_fuel) %in%  c("nrg_bal", "siec","geo","TIME_PERIOD","OBS_VALUE")]  <- c("energy_balance","fuel_type", "Country_Code", "Year","value" )
+
+enr_full_wide_fuel <- pivot_wider(enr_full_fuel, id_cols=c('Country_Code','Year',"fuel_type"), names_from="energy_balance", values_from="value")
+names(enr_full_wide_fuel)[names(enr_full_wide_fuel) %in% c( "AFC", "EXP", "FC_E", "FC_NE", "FEC2020-2030",  "GAE", "IMP", "NRGSUP", "PEC2020-2030", "PPRD", "RCV_RCY", "STATDIFF", "STK_CHG")]  <- c("avail_fin_cons", "exports", "fin_cons_enr","fin_cons_noeenr", "fin_enr_cons", "Gross_available_energy", "imports", "tot_enr_supply", "primary_enr_cons", "primary_prod", "recovered_recycled_prod", "
+stat_diff", "stk_change" )
+
+enr_full_wide_fuel <- enr_full_wide_fuel %>%
+  mutate(fuel_type = case_when(
+    fuel_type == "C0000X0350-0370" ~ 'Solid_fossil_fuels',
+    fuel_type == "G3000" ~ 'Natural_gas',
+    fuel_type == "N900H" ~ 'Nuclear_heat',
+    fuel_type ==  "O4000XBIO" ~ 'Oil_and_petroleum_products',
+    fuel_type == "RA000" ~ 'Renewables_and_biofuels',
+    fuel_type == "TOTAL" ~ 'Total',
+    TRUE ~ fuel_type 
+  ))
+enr_EU_fuel <- enr_full_wide_fuel %>%
+  mutate(Country_Name = country_names[Country_Code]) %>% 
+  select(1, Country_Name, everything()) %>% 
+  filter(!is.na(Country_Name)) %>% 
+  filter(Year != 2022)
+
+unique(enr_EU_fuel$fuel_type)
+
+value_counts <- table(enr_EU_fuel$fuel_type)
+value_counts #only Total" has values in columns "fin_enr_cons" and "primary_enr_cons".
+```
+
+
+
+
+
+
+
+
+
+#organize gdp data, no 1990-1995 gdp 
+```{r}
+## no 1990-1995 gdp 
+gdp_full <- select(gdp_EU, -c(DATAFLOW, LAST.UPDATE, freq, OBS_FLAG,unit,na_item))
+names(gdp_full)[names(gdp_full) %in% c("geo","TIME_PERIOD","OBS_VALUE")]  <- c("Country_Code", "Year","gdp_million" )
+ 
+
+enr_tot <- left_join(enr_tot, gdp_full, by=c("Country_Code","Year"))
+```
+
+```{r}
+EnrData_EU <- enr_tot %>%  filter(Country_Code =="EU27_2020") %>% 
+    mutate(enr_intensity = Gross_available_energy/gdp_million)
+
+EnrData_EU_fuel <- enr_EU_fuel %>%  filter(Country_Code =="EU27_2020")
+
+```
+
+#stacked bar graph
+```{r}
+#In order to get stacked bar graph, we have to do this
+energy_longer_EU <- pivot_longer(EnrData_EU, 
+                              cols = c(netIM, Gross_available_energy), 
+                              names_to = "Type", 
+                              values_to = "Value")
+
+#In the article, it generated the stacked bar graph. The article graph used the proportion of net import and gross available energy and 3 fuel types, but this graph is Total.
+#Use energy_longer_EU to generate the stack graph bar
+ggplot(energy_longer_EU, aes(x = Year, y = Value, fill = Type)) + 
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("netIM" = "blue", "Gross_available_energy" = "red")) +
+  theme_minimal() +
+  labs(x = "Year", 
+       y = "Energy (TJ)", 
+       fill = "Category", 
+       title = "Energy dependency Total, EU, 1990 - 2021")
+``` 
+
+#some figures
+```{r}
+
+```
+
+
+
+```{r}
+# Get EU and other countries tables
+eu_countries <- filter(enr_tot, Year == "1990" | Year == "2021")
+eu_countries <- eu_countries %>% select(Country_Name, Year, enr_indepen_gross) %>% pivot_wider(id_cols = "Country_Name" ,names_from = "Year", values_from = "enr_indepen_gross")
+
+```
+
+
+```{r}
+#Figure 1: Ger energy independence graph and primary energy product / gross avaliable energy graph
+ggplot(EnrData_EU, aes(x=Year, y=enr_indepen_gross)) +
+  geom_line(linewidth=1) +
+  scale_y_continuous(limits = c(45, 65), breaks = scales::pretty_breaks(n = 10)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20))+
+  labs(x = "Year", y = "Energy Import dependency Ratio(%)", title = "Time Series chart of European Energy Import Dependency 1990-2021", subtitle = "Energy Import dependency Ratio(%)")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle =45, hjust = 1), panel.grid.major.y = element_line())
+
+#Figure 2a: Energy usage 
+ggplot(EnrData_EU, aes(x=Year, y=Gross_available_energy/1000000)) +
+  geom_line(linewidth=1) +
+    scale_y_continuous(limits = c(50,70), breaks = scales::pretty_breaks(n = 10))+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20))+
+  labs(x = "Year", y = " Gross Available Energy", title = "Trends in Gross Available Energy,EU, 1990-2021",subtitle = "Energy usage in Terajoule(TJ, in million) ")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle =45, hjust = 1), panel.grid.major.y = element_line())
+
+#Figure 2b: gdp (Chain linked volumes, index 2010=100)
+ggplot(EnrData_EU, aes(x=Year, y=gdp_million)) +
+  geom_line(linewidth=1) +
+    scale_y_continuous(breaks = scales::pretty_breaks(n = 10))+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20))+
+  labs(x = "Year", y = " GDP", title = "Trends in real GDP, million, EU, 1990-2021",subtitle = "gdp ")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle =45, hjust = 1), panel.grid.major.y = element_line())
+
+#Figure 2b: Energy usage with gdp. Double y axis
+ggplot(EnrData_EU, aes(x=Year)) +
+  geom_line(aes(y=Gross_available_energy, colour = "Gross Available Energy (TJ, in million)"), size=1) +
+  geom_line(aes(y=gdp_million, colour = "GDP (Million €)"), size=1) +
+  scale_y_continuous(
+    name = "Gross Available Energy (TJ)",
+    sec.axis = sec_axis(~., name = "GDP (Million €)",breaks = scales::pretty_breaks(n = 10)),breaks = scales::pretty_breaks(n = 10)
+  ) +
+  scale_colour_manual(values = c("Gross Available Energy (TJ)" = "blue", "GDP (Million €)" = "red")) +
+  labs(
+    x = "Year",
+    title = "Trends in Gross Available Energy and GDP, EU, 1990-2021",
+    subtitle = "Comparing Energy Usage in Terajoule (TJ) and GDP in Million €"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_line(),
+    legend.title = element_blank()
+  )
+
+#Figure 2c: Energy Intensity
+ggplot(EnrData_EU, aes(x=Year, y=enr_intensity)) +
+  geom_line(linewidth=1) +
+    scale_y_continuous(limits = c(4, 8),breaks = scales::pretty_breaks(n = 10))+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20))+
+  labs(x = "Year", y = "TJ per € Million", title = "Energy Intensity, EU, 1995-2021",subtitle = "Terajoule(TJ) per € Million ")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle =45, hjust = 1), panel.grid.major.y = element_line())
+
+
+#Figure 3:Trends in overall energy production, EU, 1990-2021
+ggplot(EnrData_EU, aes(x=Year, y=primary_prod/1000000))+
+  geom_line(linewidth=1) +
+  scale_y_continuous(limits = c(20, 35),breaks = scales::pretty_breaks(n = 10))+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20))+
+  labs(x = "Year", y = "Energy production(TJ, in million)", title = "Trends in overall energy production, EU, 1990-2021",subtitle = "Energy production in Terajoule(TJ, in million) ")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle =45, hjust = 1), panel.grid.major.y = element_line())
+
+#Figure 4(without log):Breakdown of Energy Production by Source, EU, 1990-2021
+EnrData_EU_fuel_nototal <- EnrData_EU_fuel %>% filter(fuel_type != "Total")
+ggplot(EnrData_EU_fuel_nototal, aes(x=Year, y=primary_prod/1000000, color = fuel_type))+
+  geom_line(linewidth=1) +
+  scale_y_continuous(limits = c(0, 15), breaks = scales::pretty_breaks(n = 10))+
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 20))+
+  labs(x = "Year", y = "Energy production(TJ, in million)", title = "Breakdown of Energy Production by Source, EU, 1990-2021",subtitle = "Energy production in Terajoule(TJ, in million)")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle =45, hjust = 1), panel.grid.major.y = element_line())
+
+
+```
+#predictions get renewable , Total, non_renewable 
+```{r}
+EnrData_EU_renewable <- EnrData_EU_fuel %>%filter(fuel_type == "Renewables_and_biofuels" | fuel_type ==   "Total" )
+
+EnrData_EU_renewable_predict <-pivot_longer(
+  data=EnrData_EU_renewable,
+  cols=5:17, 
+  names_to = "balance_sheet"
+) 
+EnrData_EU_renewable_predict <- pivot_wider(
+  data = EnrData_EU_renewable_predict,
+  id_cols=c('Country_Code', "Country_Name",'Year',"balance_sheet"), 
+  names_from='fuel_type', 
+  values_from='value' 
+) 
+
+
+EnrData_EU_renewable_predict <- mutate(EnrData_EU_renewable_predict, non_renew = Total - Renewables_and_biofuels)
+
+EnrData_EU_renewable_predict <- EnrData_EU_renewable_predict %>%
+  arrange(balance_sheet, Year) %>%
+  group_by(balance_sheet) %>%
+  mutate(total_change_rate = (Total - lag(Total)) / lag(Total)*100) %>% mutate(renew_change_rate = (Renewables_and_biofuels - lag(Renewables_and_biofuels)) / lag(Renewables_and_biofuels)*100) %>% mutate(nonrenew_change_rate = (non_renew - lag(non_renew)) / lag(non_renew)*100)
+
+```
+
+
+#get past decade average, compouding growth function, predicted to 2031, non-renewable is constant
+```{r}
+EnrData_EU_renewable_predict_prod <- EnrData_EU_renewable_predict %>%  filter(balance_sheet == "primary_prod" | balance_sheet == "Gross_available_energy")
+
+#average of past 10 years
+average_past10 <- mean(EnrData_EU_renewable_predict_prod$renew_change_rate[55:64])
+initial_value <- as.numeric(EnrData_EU_renewable_predict_prod[64,5])
+periods <- 10
+
+#compounding growth function
+predicted_renewable <- as.numeric(initial_value * (1 + average_past10/100) ^ periods)
+
+GAE2021_renew <- as.numeric(EnrData_EU_renewable_predict_prod[32, 5])
+
+GAE2021_total <- as.numeric(EnrData_EU_renewable_predict_prod[32, 6])
+
+nonrenew_prod2021 <- as.numeric(EnrData_EU_renewable_predict_prod[64, 7])
+
+
+X <- as.numeric((predicted_renewable+nonrenew_prod2021)/GAE2021_total)
+pred_im_dpen <- as.numeric(1-((predicted_renewable+nonrenew_prod2021)/GAE2021_total))
+
+renewable_prod_2021 <-  as.numeric(EnrData_EU_renewable_predict_prod[64, 5])
+
+X_check <- as.numeric((renewable_prod_2021+nonrenew_prod2021)/GAE2021_total)
+check_value <- as.numeric(1-X_check)
+```
+
+
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
